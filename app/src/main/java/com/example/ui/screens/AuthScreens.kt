@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -119,6 +120,7 @@ fun OnboardingScreen(navController: NavController, viewModel: AppViewModel) {
 
 @Composable
 fun LoginScreen(navController: NavController, viewModel: AppViewModel) {
+    val context = LocalContext.current
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -183,6 +185,18 @@ fun LoginScreen(navController: NavController, viewModel: AppViewModel) {
             if (isLoading) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
             else Text("Login")
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("OR", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedButton(
+            onClick = { viewModel.signInWithGoogle(context) },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            enabled = !isLoading
+        ) {
+            Text("Continue with Google")
+        }
         
         if (authError != null) {
             Spacer(modifier = Modifier.height(16.dp))
@@ -198,6 +212,7 @@ fun LoginScreen(navController: NavController, viewModel: AppViewModel) {
 
 @Composable
 fun SignupScreen(navController: NavController, viewModel: AppViewModel) {
+    val context = LocalContext.current
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -280,6 +295,18 @@ fun SignupScreen(navController: NavController, viewModel: AppViewModel) {
         ) {
             if (isLoading) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
             else Text("Sign Up")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("OR", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedButton(
+            onClick = { viewModel.signInWithGoogle(context) },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            enabled = !isLoading
+        ) {
+            Text("Continue with Google")
         }
         
         if (authError != null) {

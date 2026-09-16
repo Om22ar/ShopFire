@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -25,10 +26,13 @@ class AppViewModel(private val repository: AppRepository) : ViewModel() {
     val isUserAuthenticated: StateFlow<Boolean> = repository.authStateFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, FirebaseAuth.getInstance().currentUser != null)
 
+    val isOnline: StateFlow<Boolean> = repository.isOnlineFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery
 
-    val products: StateFlow<List<Product>> = repository.getProductsStream()
+    val products: StateFlow<List<Product>?> = repository.getProductsStream()
         .combine(_searchQuery) { productList, query ->
             if (query.isBlank()) {
                 productList
@@ -39,10 +43,10 @@ class AppViewModel(private val repository: AppRepository) : ViewModel() {
                 }
             }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    val favorites: StateFlow<List<Product>> = repository.getFavoritesStream()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val favorites: StateFlow<List<Product>?> = repository.getFavoritesStream()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     private val _userProfile = MutableStateFlow<UserProfile?>(null)
     val userProfile: StateFlow<UserProfile?> = _userProfile
@@ -119,6 +123,20 @@ class AppViewModel(private val repository: AppRepository) : ViewModel() {
         }
     }
 
+    fun signInWithGoogle(context: Context) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _authError.value = null
+            val result = repository.signInWithGoogle(context)
+            if (result.isSuccess) {
+                _userProfile.value = result.getOrNull()
+            } else {
+                _authError.value = result.exceptionOrNull()?.localizedMessage ?: "Google Sign-In failed"
+            }
+            _isLoading.value = false
+        }
+    }
+
     fun resetPassword(email: String) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -140,8 +158,25 @@ class AppViewModel(private val repository: AppRepository) : ViewModel() {
 
     fun toggleFavorite(product: Product) {
         viewModelScope.launch {
-            val isFavorite = favorites.value.any { it.id == product.id }
+            val isFavorite = favorites.value?.any { it.id == product.id } == true
             repository.toggleFavorite(product, isFavorite)
+        }
+    }
+
+    fun updateProfile(name: String, imageUri: Uri?) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _authError.value = null
+            try {
+                val updated = repository.updateUserProfile(name, imageUri)
+                if (updated != null) {
+                    _userProfile.value = updated
+                }
+            } catch (e: Exception) {
+                _authError.value = e.localizedMessage ?: "Failed to update profile"
+            } finally {
+                _isLoading.value = false
+            }
         }
     }
 

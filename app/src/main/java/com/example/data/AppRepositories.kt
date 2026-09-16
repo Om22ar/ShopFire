@@ -1,15 +1,28 @@
 package com.example.data
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.Uri
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.BuildConfig
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -29,9 +42,30 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "ap
 class AppRepository(private val context: Context) {
     private val auth = FirebaseAuth.getInstance()
     private val db = FirebaseFirestore.getInstance()
+    private val storage = FirebaseStorage.getInstance()
     private val client = OkHttpClient()
+    private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
     private val ONBOARDING_KEY = booleanPreferencesKey("onboarding_completed")
+
+    val isOnlineFlow: Flow<Boolean> = callbackFlow {
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) { trySend(true) }
+            override fun onLost(network: Network) { trySend(false) }
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                val isConnected = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                trySend(isConnected)
+            }
+        }
+        val request = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build()
+        val activeNetwork = connectivityManager.activeNetwork
+        val caps = connectivityManager.getNetworkCapabilities(activeNetwork)
+        val initial = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        trySend(initial)
+
+        connectivityManager.registerNetworkCallback(request, callback)
+        awaitClose { connectivityManager.unregisterNetworkCallback(callback) }
+    }
 
     val onboardingCompletedFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[ONBOARDING_KEY] ?: false
@@ -54,6 +88,56 @@ class AppRepository(private val context: Context) {
 
     fun getCurrentUser() = auth.currentUser
 
+    suspend fun signInWithGoogle(activityContext: Context): Result<UserProfile> {
+        return try {
+            val credentialManager = CredentialManager.create(activityContext)
+            var clientId = ""
+            try {
+                val resId = activityContext.resources.getIdentifier("default_web_client_id", "string", activityContext.packageName)
+                if (resId != 0) {
+                    clientId = activityContext.getString(resId)
+                }
+            } catch (e: Exception) {}
+
+            if (clientId.isEmpty()) {
+                return Result.failure(Exception("Google Sign-In is not configured. Please enable it in Firebase Console, add SHA-1, and re-download google-services.json."))
+            }
+
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(false)
+                .setServerClientId(clientId)
+                .build()
+
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build()
+
+            val result = credentialManager.getCredential(activityContext, request)
+            val credential = result.credential
+            
+            if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                val authCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
+                val authResult = auth.signInWithCredential(authCredential).await()
+                
+                val user = authResult.user!!
+                val profile = UserProfile(
+                    uid = user.uid,
+                    name = user.displayName ?: "Google User",
+                    email = user.email ?: "",
+                    profileImage = user.photoUrl?.toString() ?: "",
+                    role = "user"
+                )
+                db.collection("users").document(user.uid).set(profile).await()
+                Result.success(profile)
+            } else {
+                Result.failure(Exception("Unexpected credential type"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun getUserProfile(): UserProfile? {
         val uid = auth.currentUser?.uid ?: return null
         return try {
@@ -62,6 +146,21 @@ class AppRepository(private val context: Context) {
         } catch (e: Exception) {
             null
         }
+    }
+
+    suspend fun updateUserProfile(name: String, imageUri: Uri?): UserProfile? {
+        val user = auth.currentUser ?: return null
+        var imageUrl: String? = null
+        if (imageUri != null) {
+            val ref = storage.reference.child("users/${user.uid}/profile.jpg")
+            ref.putFile(imageUri).await()
+            imageUrl = ref.downloadUrl.await().toString()
+        }
+        val updates = mutableMapOf<String, Any>("name" to name)
+        if (imageUrl != null) updates["profileImage"] = imageUrl
+        
+        db.collection("users").document(user.uid).update(updates).await()
+        return getUserProfile()
     }
 
     // --- Products ---
