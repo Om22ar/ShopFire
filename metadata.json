@@ -1,0 +1,6 @@
+{
+  "name": "ShopFire",
+  "description": "A complete, production-quality mobile application connected to Firebase, featuring real-time data, authentication, and a Gemini-powered AI assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
